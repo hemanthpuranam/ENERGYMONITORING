@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Smart Energy Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.0"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;800&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet" />
+  <style>
+    body { font-family: 'Poppins', sans-serif; }
+    .sidebar-button.active { background-color: #3b82f6; color: white; }
+    select {
+      background-color: #f0f9ff;
+      border: 1px solid #cbd5e0;
+      padding: 0.5rem 1rem;
+      border-radius: 0.375rem;
+      font-size: 0.875rem;
+      transition: all 0.3s;
+    }
+    select:hover {
+      border-color: #3b82f6;
+      background-color: #e0f2fe;
+    }
+    select:focus {
+      outline: none;
+      box-shadow: 0 0 0 2px rgba(59,130,246,0.5);
+      background-color: #e0f2fe;
+    }
+  </style>
+  <script>
+    if (localStorage.getItem('theme') === 'dark') {
+      document.documentElement.classList.add('dark');
+    }
+  </script>
+</head>
+<body class="bg-gradient-to-r from-blue-50 to-white dark:from-gray-900 dark:to-gray-800 text-gray-800 dark:text-gray-100 transition duration-300">
+<div class="flex min-h-screen">
+  <!-- Sidebar -->
+  <aside class="w-64 bg-white dark:bg-gray-900 shadow-xl p-6 space-y-4">
+    <h2 class="text-2xl font-bold text-blue-600 dark:text-blue-400 mb-6">⚡ Energy Dash</h2>
+    <nav class="space-y-3">
+      <button class="sidebar-button" onclick="renderChart('usedLine', this)">📈 Energy Used</button>
+      <button class="sidebar-button" onclick="renderChart('generatedLine', this)">⚡ Energy Generated</button>
+      <button class="sidebar-button" onclick="renderChart('savedLine', this)">💾 Energy Saved</button>
+      <button class="sidebar-button" onclick="renderChart('wastedLine', this)">🔥 Energy Wasted</button>
+      <button class="sidebar-button" onclick="renderChart('differenceLine', this)">🔁 Difference</button>
+      <button class="sidebar-button" onclick="renderChart('summaryBar', this)">📊 Bar Chart</button>
+      <button class="sidebar-button" onclick="renderChart('summaryPie', this)">🥧 Pie Chart</button>
+    </nav>
+    <div class="pt-6 space-y-2">
+      <button id="toggleTheme" class="text-sm text-blue-600 dark:text-blue-300 underline">🌙 Toggle Dark Mode</button>
+      <button onclick="saveChart()" class="text-sm text-blue-600 dark:text-blue-300 underline">📷 Save Chart</button>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="flex-1 p-6">
+    <!-- Filters -->
+    <div class="flex flex-wrap gap-3 mb-6 justify-between items-center">
+      <form method="get" class="flex gap-2">
+        <select name="country" onchange="this.form.submit()" class="p-2 text-sm">
+          <option value="">🌍 All Countries</option>
+          {% for c in filters.countries %}
+            <option value="{{ c }}" {% if c == selected_country %}selected{% endif %}>{{ c }}</option>
+          {% endfor %}
+        </select>
+        <select name="fuel_type" onchange="this.form.submit()" class="p-2 text-sm">
+          <option value="">⛽ All Fuel Types</option>
+          {% for f in filters.fuel_types %}
+            <option value="{{ f }}" {% if f == selected_fuel_type %}selected{% endif %}>{{ f }}</option>
+          {% endfor %}
+        </select>
+      </form>
+      <a href="/download" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">⬇ Download CSV</a>
+    </div>
+
+    <!-- Summary Cards -->
+    <section class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6 text-center">
+      <div class="bg-white dark:bg-gray-800 p-4 rounded-xl shadow">
+        <p class="text-sm">🔋 Used</p>
+        <p class="text-2xl font-bold text-green-500">{{ energy_stats.used }} EJ</p>
+      </div>
+      <div class="bg-white dark:bg-gray-800 p-4 rounded-xl shadow">
+        <p class="text-sm">⚡ Generated</p>
+        <p class="text-2xl font-bold text-blue-500">{{ energy_stats.generated }} EJ</p>
+      </div>
+      <div class="bg-white dark:bg-gray-800 p-4 rounded-xl shadow">
+        <p class="text-sm">💾 Saved</p>
+        <p class="text-2xl font-bold text-purple-500">{{ energy_stats.saved }} EJ</p>
+      </div>
+      <div class="bg-white dark:bg-gray-800 p-4 rounded-xl shadow">
+        <p class="text-sm">🔥 Wasted</p>
+        <p class="text-2xl font-bold text-red-500">{{ energy_stats.wasted }} EJ</p>
+      </div>
+    </section>
+
+    <!-- Chart -->
+    <div class="bg-white dark:bg-gray-800 p-4 rounded-xl shadow">
+      <canvas id="dashboardChart" style="height: 600px; width: 100%;"></canvas>
+    </div>
+  </main>
+</div>
+<!-- Scripts -->
+<script>
+    const years = {{ chart_data.years | safe }};
+    const used = {{ chart_data.used | safe }};
+    const generated = {{ chart_data.generated | safe }};
+    const saved = {{ chart_data.saved | safe }};
+    const wasted = {{ chart_data.wasted | safe }};
+    const difference = {{ chart_data.difference | safe }};
+    
+    let chart, autoInterval;
+    const ctx = document.getElementById('dashboardChart').getContext('2d');
+    const chartSequence = ['usedLine', 'generatedLine', 'savedLine', 'wastedLine', 'differenceLine', 'summaryBar', 'summaryPie'];
+    let currentIndex = 0;
+    
+    function renderChart(type, button = null) {
+      if (chart) chart.destroy();
+      document.querySelectorAll('.sidebar-button').forEach(btn => btn.classList.remove('active'));
+      if (button) button.classList.add('active');
+    
+      const options = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { position: 'top' },
+          tooltip: { enabled: true },
+          zoom: {
+            pan: { enabled: true },
+            zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'xy' }
+          }
+        },
+        scales: {
+          x: { title: { display: true, text: 'Year' } },
+          y: { title: { display: true, text: 'Energy (EJ)' }, beginAtZero: true }
+        }
+      };
+    
+      const dataSets = {
+        usedLine: { label: 'Used', data: used, borderColor: 'green', backgroundColor: 'rgba(34,197,94,0.2)' },
+        generatedLine: { label: 'Generated', data: generated, borderColor: 'blue', backgroundColor: 'rgba(59,130,246,0.2)' },
+        savedLine: { label: 'Saved', data: saved, borderColor: 'purple', backgroundColor: 'rgba(168,85,247,0.2)' },
+        wastedLine: { label: 'Wasted', data: wasted, borderColor: 'red', backgroundColor: 'rgba(239,68,68,0.2)' },
+        differenceLine: { label: 'Generated - Used', data: difference, borderColor: 'orange', backgroundColor: 'rgba(251,146,60,0.2)' }
+      };
+    
+      if (type in dataSets) {
+        chart = new Chart(ctx, { type: 'line', data: { labels: years, datasets: [dataSets[type]] }, options });
+      } else if (type === 'summaryBar') {
+        chart = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: ['Used', 'Generated', 'Saved', 'Wasted'],
+            datasets: [{
+              label: 'Summary',
+              data: [used.reduce((a,b)=>a+b), generated.reduce((a,b)=>a+b), saved.reduce((a,b)=>a+b), wasted.reduce((a,b)=>a+b)],
+              backgroundColor: ['green', 'blue', 'purple', 'red']
+            }]
+          },
+          options: { responsive: true, plugins: { legend: { display: false } }, maintainAspectRatio: false }
+        });
+      } else if (type === 'summaryPie') {
+        chart = new Chart(ctx, {
+          type: 'pie',
+          data: {
+            labels: ['Used', 'Generated', 'Saved', 'Wasted'],
+            datasets: [{
+              data: [used.reduce((a,b)=>a+b), generated.reduce((a,b)=>a+b), saved.reduce((a,b)=>a+b), wasted.reduce((a,b)=>a+b)],
+              backgroundColor: ['green', 'blue', 'purple', 'red']
+            }]
+          },
+          options: { responsive: true, plugins: { legend: { position: 'right' } }, maintainAspectRatio: false }
+        });
+      }
+    }
+    
+    function saveChart() {
+      const link = document.createElement('a');
+      link.download = 'smart_energy_chart.png';
+      link.href = chart.toBase64Image();
+      link.click();
+    }
+    
+    function startAutoCycle() {
+      autoInterval = setInterval(() => {
+        currentIndex = (currentIndex + 1) % chartSequence.length;
+        renderChart(chartSequence[currentIndex], document.querySelectorAll('.sidebar-button')[currentIndex]);
+      }, 5000);
+    }
+    
+    document.getElementById("toggleTheme").addEventListener("click", () => {
+      document.documentElement.classList.toggle("dark");
+      localStorage.setItem("theme", document.documentElement.classList.contains("dark") ? "dark" : "light");
+    });
+    
+    renderChart('usedLine', document.querySelector('.sidebar-button'));
+    startAutoCycle();
+    </script>
+    </body>
+    </html>
+    
